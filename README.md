@@ -26,10 +26,10 @@ A modern Android application built with **Kotlin** and **Jetpack Compose** for t
 ##  Screenshots 
 
 <p align="center">
-  <img width="24%" alt="Screenshot_20260324-130307" src="https://github.com/user-attachments/assets/5bcd57f4-5f38-4a8b-9d6f-82373095ba1a" />
-  <img width="24%" alt="Screenshot_20260324-130330" src="https://github.com/user-attachments/assets/3ca977a6-e985-4dd1-8218-fe59d4a6f495" />
-  <img width="24%" alt="Screenshot_20260324-130439" src="https://github.com/user-attachments/assets/570fd3cb-750e-48f7-a7a2-2784282db966" />
-  <img width="24%" alt="Screenshot_20260324-130335" src="https://github.com/user-attachments/assets/080e67bd-6f0f-425d-a1e4-26df6530ae0c" />
+  <img width="24%" alt="Screenshot_20260324-130307" src="https://github.com/user-attachments/assets/b7a419e1-4bcc-49b9-9366-0e94c7c3c0a1" />
+  <img width="24%" alt="Screenshot_20260324-130330" src="https://github.com/user-attachments/assets/5485926b-284a-40d2-a6a2-852ccb0318f8" />
+  <img width="24%" alt="Screenshot_20260324-130439" src="https://github.com/user-attachments/assets/f3b5688c-583a-4e81-b13d-0c19b8d24aac" />
+  <img width="24%" alt="Screenshot_20260324-130335" src="https://github.com/user-attachments/assets/11e98a4d-47d5-40d3-8be4-9c686a7b9919" />
 </p>
 
 ## Installation & Setup
