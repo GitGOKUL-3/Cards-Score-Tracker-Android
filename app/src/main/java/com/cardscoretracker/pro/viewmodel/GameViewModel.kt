@@ -4,8 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.cardscoretracker.pro.data.AppDatabase
-import com.cardscoretracker.pro.data.GameDao
 import com.cardscoretracker.pro.data.GameEntity
+import com.cardscoretracker.pro.data.GameRepository
 import com.cardscoretracker.pro.data.GameWithRoundsAndScores
 import com.cardscoretracker.pro.data.PlayerNameRepository
 import com.cardscoretracker.pro.data.PlayerScoreEntity
@@ -22,26 +22,29 @@ data class GameState(
     val gameMode: GameMode = GameMode.MODE_240,
     val players: List<Player> = emptyList(),
     val currentRound: Int = 1,
-    val totalRounds: Int = 0, // 0 = unlimited (240 mode)
-    val roundInputs: Map<Int, String> = emptyMap(), // playerId -> input string
-    val chanceUsedThisRound: Set<Int> = emptySet(), // playerIds who used chance this round
+    val totalRounds: Int = 0,              // 0 = unlimited (240 mode)
+    val roundInputs: Map<Int, String> = emptyMap(),       // playerId -> input string
+    val chanceUsedThisRound: Set<Int> = emptySet(),        // playerIds who used chance this round
+    val winnerSelectedThisRound: Int? = null,              // Feature 2: playerId of round winner (0 pts)
     val isGameOver: Boolean = false,
     val loserName: String = "",
     val loserMessage: String = "",
     val roundHistory: List<RoundRecord> = emptyList(),
-    val showLoserDialog: Boolean = false
+    val showLoserDialog: Boolean = false,
+    val showWinnerRequiredError: Boolean = false            // Bug fix: must select winner each round
 )
 
 data class RoundRecord(
     val roundNumber: Int,
-    val scores: Map<String, Int>, // playerName -> score for this round
+    val scores: Map<String, Int>,          // playerName -> score for this round
     val isDoubled: Boolean = false
 )
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val db: AppDatabase = AppDatabase.getDatabase(application)
-    private val dao: GameDao = db.gameDao()
+    private val repository: GameRepository = GameRepository(
+        AppDatabase.getDatabase(application).gameDao()
+    )
 
     private val _gameState = MutableStateFlow(GameState())
     val gameState: StateFlow<GameState> = _gameState.asStateFlow()
@@ -54,7 +57,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDarkTheme = MutableStateFlow(ThemePreferences.isDarkTheme(application))
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
-    val allGames = dao.getAllGames()
+    val allGames = repository.allGames
 
     init {
         _savedPlayerNames.value = PlayerNameRepository.getSavedNames(application)
@@ -73,8 +76,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             Player(id = index, name = name)
         }
         val totalRounds = when (mode) {
-            GameMode.MODE_7S -> 7
-            GameMode.MODE_5S -> 5
+            GameMode.MODE_7S  -> 7
+            GameMode.MODE_5S  -> 5
             GameMode.MODE_240 -> 0
         }
         _gameState.value = GameState(
@@ -90,8 +93,69 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateRoundInput(playerId: Int, value: String) {
         val current = _gameState.value
+        // Don't allow overwriting a locked winner entry via text field
+        if (current.winnerSelectedThisRound == playerId) return
         _gameState.value = current.copy(
             roundInputs = current.roundInputs + (playerId to value)
+        )
+    }
+
+    // ─── Feature 2: Round Winner ──────────────────────────────────────────────
+
+    /**
+     * Marks [playerId] as the winner for this round (score = 0).
+     * Toggling the same player deselects them. Selecting a different player
+     * automatically deselects the previous winner and restores their input.
+     */
+    fun markAsRoundWinner(playerId: Int) {
+        val current = _gameState.value
+        val isAlreadyWinner = current.winnerSelectedThisRound == playerId
+
+        if (isAlreadyWinner) {
+            // Deselect — clear the 0 and restore blank input
+            _gameState.value = current.copy(
+                winnerSelectedThisRound = null,
+                roundInputs = current.roundInputs + (playerId to "")
+            )
+        } else {
+            // Select new winner; restore previous winner's input to blank, clear any error
+            val previousWinnerId = current.winnerSelectedThisRound
+            var updatedInputs = current.roundInputs + (playerId to "0")
+            if (previousWinnerId != null) {
+                updatedInputs = updatedInputs + (previousWinnerId to "")
+            }
+            _gameState.value = current.copy(
+                winnerSelectedThisRound = playerId,
+                roundInputs = updatedInputs,
+                showWinnerRequiredError = false  // clear error as soon as winner is chosen
+            )
+        }
+    }
+
+    // ─── Feature 1: Mistake Correction / Reset Round ──────────────────────────
+
+    /**
+     * Clears all score inputs for the current round and undoes any chance usage.
+     * The dealer index is NOT changed — only input data is reset.
+     */
+    fun resetCurrentRoundData() {
+        val current = _gameState.value
+
+        // Undo chances that were used this round
+        val revertedPlayers = current.players.map { player ->
+            if (current.chanceUsedThisRound.contains(player.id)) {
+                player.copy(chances = (player.chances - 1).coerceAtLeast(0))
+            } else {
+                player
+            }
+        }
+
+        _gameState.value = current.copy(
+            players = revertedPlayers,
+            roundInputs = current.players.associate { it.id to "" },
+            chanceUsedThisRound = emptySet(),
+            winnerSelectedThisRound = null,
+            showWinnerRequiredError = false       // clear winner error on round reset
         )
     }
 
@@ -124,11 +188,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (!allFilled) return
 
+        // All modes: require exactly one round winner before submitting
+        if (current.winnerSelectedThisRound == null) {
+            _gameState.value = current.copy(showWinnerRequiredError = true)
+            return
+        }
+
         val roundNumber = current.currentRound
         val isDoubled = isRoundDoubled(current.gameMode, roundNumber, current.totalRounds)
 
-        // Calculate scores for this round
-        // Players who used a chance this round get their chances counter incremented
+        // Feature 2: winner gets 0 regardless of input; others use their input value
         val roundScores = mutableMapOf<String, Int>()
         val updatedPlayers = current.players.map { player ->
             val rawScore = inputs[player.id]!!.toInt()
@@ -163,10 +232,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         currentRound = roundNumber + 1,
                         roundInputs = updatedPlayers.associate { it.id to "" },
                         chanceUsedThisRound = emptySet(),
+                        winnerSelectedThisRound = null,
                         roundHistory = newHistory,
                         isGameOver = true,
                         loserName = loser.name,
-                        loserMessage = "${loser.name} You are lost ",
+                        loserMessage = "${loser.name} has lost!",
                         showLoserDialog = true
                     )
                     _gameState.value = newState
@@ -177,6 +247,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         currentRound = roundNumber + 1,
                         roundInputs = updatedPlayers.associate { it.id to "" },
                         chanceUsedThisRound = emptySet(),
+                        winnerSelectedThisRound = null,
                         roundHistory = newHistory
                     )
                 }
@@ -193,10 +264,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         currentRound = roundNumber + 1,
                         roundInputs = updatedPlayers.associate { it.id to "" },
                         chanceUsedThisRound = emptySet(),
+                        winnerSelectedThisRound = null,
                         roundHistory = newHistory,
                         isGameOver = true,
                         loserName = loser.name,
-                        loserMessage = "${loser.name} You are lost ",
+                        loserMessage = "${loser.name} has lost!",
                         showLoserDialog = true
                     )
                     _gameState.value = newState
@@ -207,6 +279,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         currentRound = roundNumber + 1,
                         roundInputs = updatedPlayers.associate { it.id to "" },
                         chanceUsedThisRound = emptySet(),
+                        winnerSelectedThisRound = null,
                         roundHistory = newHistory
                     )
                 }
@@ -221,27 +294,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun checkFor240GameOver(updatedPlayers: List<Player>, current: GameState) {
-        val over240 = updatedPlayers.filter { it.totalScore >= 240 }
-        if (over240.isNotEmpty()) {
-            val loser = over240.maxByOrNull { it.totalScore }!!
-            val finalPlayers = updatedPlayers.map { p ->
-                if (p.id == loser.id) p.copy(isLoser = true) else p
-            }
-            val newState = current.copy(
-                players = finalPlayers,
-                isGameOver = true,
-                loserName = loser.name,
-                loserMessage = "${loser.name} You are lost ",
-                showLoserDialog = true
-            )
-            _gameState.value = newState
-            saveGameToDb(newState)
-        }
-    }
-
     fun dismissLoserDialog() {
         _gameState.value = _gameState.value.copy(showLoserDialog = false)
+    }
+
+    /** Called by UI after the winner-required snackbar is shown. */
+    fun clearWinnerError() {
+        _gameState.value = _gameState.value.copy(showWinnerRequiredError = false)
     }
 
     fun resetGame() {
@@ -265,7 +324,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 loserName = state.loserName,
                 totalRounds = state.roundHistory.size
             )
-            val gameId = dao.insertGame(gameEntity)
+            val gameId = repository.insertGame(gameEntity)
 
             state.roundHistory.forEach { roundRecord ->
                 val roundEntity = RoundEntity(
@@ -273,7 +332,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     roundNumber = roundRecord.roundNumber,
                     isDoubled = roundRecord.isDoubled
                 )
-                val roundId = dao.insertRound(roundEntity)
+                val roundId = repository.insertRound(roundEntity)
 
                 state.players.forEach { player ->
                     val score = roundRecord.scores[player.name] ?: 0
@@ -281,7 +340,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     val runningTotal = state.roundHistory
                         .filter { it.roundNumber <= roundRecord.roundNumber }
                         .sumOf { it.scores[player.name] ?: 0 }
-                    dao.insertPlayerScore(
+                    repository.insertPlayerScore(
                         PlayerScoreEntity(
                             roundId = roundId,
                             playerName = player.name,
@@ -297,6 +356,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     // ─── History ──────────────────────────────────────────────────────────────
 
     suspend fun getGameWithDetails(gameId: Long): GameWithRoundsAndScores? {
-        return dao.getGameWithDetails(gameId)
+        return repository.getGameWithDetails(gameId)
     }
 }

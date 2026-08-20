@@ -1,13 +1,13 @@
 package com.cardscoretracker.pro.data
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
-import androidx.core.content.FileProvider
 import java.io.File
-import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -19,18 +19,29 @@ object ExcelExporter {
 
     /**
      * Saves the game as a CSV file directly to the Downloads folder on the device.
+     * Uses MediaStore (Scoped Storage) — correct approach for API 29+.
      */
     fun downloadAsCsv(context: Context, gameDetails: GameWithRoundsAndScores) {
         try {
             val csv      = buildCsv(gameDetails)
             val fileName = buildFileName(gameDetails)
 
-            // API 29+: use MediaStore; below API 29: write directly to Downloads
-            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val file = File(downloads, fileName)
-            FileWriter(file).use { it.write(csv) }
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
 
-            Toast.makeText(context, "✅ Saved to Downloads/$fileName", Toast.LENGTH_LONG).show()
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(csv.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "✅ Saved to Downloads/$fileName", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(context, "Download failed: Could not create file", Toast.LENGTH_LONG).show()
+            }
         } catch (e: Exception) {
             Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -39,21 +50,25 @@ object ExcelExporter {
     /**
      * Exports the game as a CSV file and launches a system share sheet
      * so the user can send it via WhatsApp, Gmail, Google Drive, etc.
+     *
+     * Writes to internal cache dir and exposes via FileProvider for max compatibility.
+     * (MediaStore URIs are rejected by many apps like WhatsApp — FileProvider is correct.)
      */
     fun shareAsCsv(context: Context, gameDetails: GameWithRoundsAndScores) {
         try {
             val csv      = buildCsv(gameDetails)
             val fileName = buildFileName(gameDetails)
 
-            // Write to app cache (no storage permission required)
-            val cacheDir = File(context.cacheDir, "shared_exports").also { it.mkdirs() }
-            val file = File(cacheDir, fileName)
-            FileWriter(file).use { it.write(csv) }
+            // Write CSV to internal cache — no storage permissions needed
+            val shareDir = File(context.cacheDir, "share").apply { mkdirs() }
+            val csvFile  = File(shareDir, fileName)
+            csvFile.writeText(csv, Charsets.UTF_8)
 
-            val uri: Uri = FileProvider.getUriForFile(
+            // Expose via FileProvider so other apps can read it
+            val uri: Uri = androidx.core.content.FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
-                file
+                csvFile
             )
 
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -63,7 +78,6 @@ object ExcelExporter {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(Intent.createChooser(shareIntent, "Share Score Sheet"))
-
         } catch (e: Exception) {
             Toast.makeText(context, "Share failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
