@@ -20,7 +20,7 @@ import androidx.room.PrimaryKey
 data class RoundEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val gameId: Long,
-    val roundNumber: Int,
+    val gameId: Long = 0L,
+    val roundNumber: Int = 0,
     val isDoubled: Boolean = false
 )

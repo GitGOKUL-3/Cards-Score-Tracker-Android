@@ -22,14 +22,18 @@ object FirebaseModule {
     fun provideFirestore(): FirebaseFirestore {
         return firestoreInstance ?: synchronized(this) {
             firestoreInstance ?: FirebaseFirestore.getInstance().apply {
-                val settings = FirebaseFirestoreSettings.Builder()
-                    .setLocalCacheSettings(
-                        PersistentCacheSettings.newBuilder()
-                            .setSizeBytes(CACHE_SIZE_100_MB)
-                            .build()
-                    )
-                    .build()
-                firestoreSettings = settings
+                try {
+                    val settings = FirebaseFirestoreSettings.Builder()
+                        .setLocalCacheSettings(
+                            PersistentCacheSettings.newBuilder()
+                                .setSizeBytes(CACHE_SIZE_100_MB)
+                                .build()
+                        )
+                        .build()
+                    firestoreSettings = settings
+                } catch (_: Exception) {
+                    // Ignored if settings were already initialized on this instance
+                }
             }.also { firestoreInstance = it }
         }
     }

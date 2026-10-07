@@ -20,9 +20,9 @@ import androidx.room.PrimaryKey
 data class PlayerScoreEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val roundId: Long,
-    val playerName: String,
-    val score: Int,
+    val roundId: Long = 0L,
+    val playerName: String = "",
+    val score: Int = 0,
     val chanceUsed: Boolean = false,
     val runningTotal: Int = 0
 )

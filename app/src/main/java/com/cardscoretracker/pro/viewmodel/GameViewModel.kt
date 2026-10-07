@@ -37,12 +37,12 @@ data class GameState(
 )
 
 data class RoundRecord(
-    val roundNumber: Int,
-    val scores: Map<String, Int>, // playerName -> score for this round
+    val roundNumber: Int = 0,
+    val scores: Map<String, Int> = emptyMap(), // playerName -> score for this round
     val isDoubled: Boolean = false
 )
 
-class GameViewModel(
+class GameViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: GameRepository = GameRepositoryFactory.getRepository()
 ) : AndroidViewModel(application) {
