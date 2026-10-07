@@ -78,9 +78,9 @@ fun CardScoreTrackerApp(viewModel: GameViewModel, isDarkTheme: Boolean) {
         }
         composable(
             route = "history_detail/{gameId}",
-            arguments = listOf(navArgument("gameId") { type = NavType.LongType })
+            arguments = listOf(navArgument("gameId") { type = NavType.StringType })
         ) { backStackEntry ->
-            val gameId = backStackEntry.arguments?.getLong("gameId") ?: 0L
+            val gameId = backStackEntry.arguments?.getString("gameId") ?: ""
             HistoryDetailScreen(
                 gameId = gameId,
                 viewModel = viewModel,

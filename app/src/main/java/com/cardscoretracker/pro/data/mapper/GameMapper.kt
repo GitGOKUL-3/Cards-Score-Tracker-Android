@@ -108,3 +108,35 @@ fun Game.toDto(): GameDto {
         updatedAt = updatedAt
     )
 }
+
+fun Game.toGameWithRoundsAndScores(): com.cardscoretracker.pro.data.GameWithRoundsAndScores {
+    val gameEntity = com.cardscoretracker.pro.data.GameEntity(
+        id = id.hashCode().toLong(),
+        gameMode = gameMode.name,
+        dateTime = createdAt?.time ?: System.currentTimeMillis(),
+        playerNames = playerNames.joinToString(",", "[", "]") { "\"$it\"" },
+        loserName = loserName,
+        totalRounds = totalRounds
+    )
+    val roundsWithScores = rounds.map { r ->
+        com.cardscoretracker.pro.data.RoundWithScores(
+            round = com.cardscoretracker.pro.data.RoundEntity(
+                id = r.id.hashCode().toLong(),
+                gameId = id.hashCode().toLong(),
+                roundNumber = r.roundNumber,
+                isDoubled = r.isDoubled
+            ),
+            scores = r.playerScores.map { ps ->
+                com.cardscoretracker.pro.data.PlayerScoreEntity(
+                    id = ps.id.hashCode().toLong(),
+                    roundId = r.id.hashCode().toLong(),
+                    playerName = ps.playerName,
+                    score = ps.score,
+                    chanceUsed = ps.chanceUsed,
+                    runningTotal = ps.runningTotal
+                )
+            }
+        )
+    }
+    return com.cardscoretracker.pro.data.GameWithRoundsAndScores(gameEntity, roundsWithScores)
+}

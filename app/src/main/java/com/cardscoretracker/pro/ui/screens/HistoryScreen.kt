@@ -19,7 +19,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.cardscoretracker.pro.data.GameEntity
+import com.cardscoretracker.pro.model.Game
 import com.cardscoretracker.pro.model.GameMode
 import com.cardscoretracker.pro.ui.theme.*
 import com.cardscoretracker.pro.viewmodel.GameViewModel
@@ -31,7 +31,7 @@ import java.util.*
 fun HistoryScreen(
     viewModel: GameViewModel,
     isDarkTheme: Boolean,
-    onGameClick: (Long) -> Unit,
+    onGameClick: (String) -> Unit,
     onBack: () -> Unit
 ) {
     val games by viewModel.allGames.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -120,32 +120,20 @@ private fun EmptyHistoryView(isDarkTheme: Boolean) {
 
 @Composable
 private fun GameHistoryCard(
-    game: GameEntity,
+    game: Game,
     isDarkTheme: Boolean,
     onClick: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
-    val dateStr = dateFormat.format(Date(game.dateTime))
+    val dateStr = game.createdAt?.let { dateFormat.format(it) } ?: "Recent"
 
     val modeEmoji = when (game.gameMode) {
-        GameMode.MODE_240.name -> "🟥"
-        GameMode.MODE_7S.name -> "🟦"
-        GameMode.MODE_5S.name -> "🟩"
-        else -> "🃏"
+        GameMode.MODE_240 -> "🟥"
+        GameMode.MODE_7S -> "🟦"
+        GameMode.MODE_5S -> "🟩"
     }
-    val modeName = when (game.gameMode) {
-        GameMode.MODE_240.name -> "240 Mode"
-        GameMode.MODE_7S.name -> "7s Mode"
-        GameMode.MODE_5S.name -> "5s Mode"
-        else -> game.gameMode
-    }
-
-    // Parse player names from JSON
+    val modeName = game.gameMode.displayName
     val playerNames = game.playerNames
-        .removePrefix("[").removeSuffix("]")
-        .split(",")
-        .map { it.trim().removeSurrounding("\"") }
-        .filter { it.isNotEmpty() }
 
     Card(
         onClick = onClick,
