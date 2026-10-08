@@ -196,6 +196,13 @@ fun PlayerSetupScreen(
                             color = if (isDarkTheme) LightBlue else VibrantOrange
                         )
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Enter players in clockwise order (Dealer first)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isDarkTheme) LightGray.copy(alpha = 0.7f) else subTextColor,
+                        fontSize = 11.sp
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
 
                     playerNames.forEachIndexed { index, name ->

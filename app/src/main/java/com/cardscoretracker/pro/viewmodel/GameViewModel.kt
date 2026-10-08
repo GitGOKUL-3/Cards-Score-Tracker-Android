@@ -136,6 +136,28 @@ class GameViewModel @JvmOverloads constructor(
         )
     }
 
+    /**
+     * Cancels an active chance used this round by a specific player and resets their score input.
+     */
+    fun cancelChance(playerId: Int) {
+        val current = _gameState.value
+        _gameState.value = current.copy(
+            chanceUsedThisRound = current.chanceUsedThisRound - playerId,
+            roundInputs = current.roundInputs + (playerId to "")
+        )
+    }
+
+    /**
+     * Clears all score inputs for the current round and undoes any chance usage.
+     */
+    fun resetCurrentRoundData() {
+        val current = _gameState.value
+        _gameState.value = current.copy(
+            roundInputs = current.players.associate { it.id to "" },
+            chanceUsedThisRound = emptySet()
+        )
+    }
+
     // ─── Submit Round ─────────────────────────────────────────────────────────
 
     fun submitRound() {
