@@ -72,8 +72,13 @@ dependencies {
     // Firebase BoM (Bill of Materials) ensures compatible versions
     implementation(platform(libs.firebase.bom))
 
-    // Firestore & Coroutines integration
+    // Firestore, Auth & Coroutines integration
     implementation(libs.firebase.firestore)
+    implementation(libs.firebase.auth)
     implementation(libs.kotlinx.coroutines.play.services)
 
+    // Google Sign-In with Credential Manager
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
 }

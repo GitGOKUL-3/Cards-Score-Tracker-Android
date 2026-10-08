@@ -7,6 +7,8 @@ import com.cardscoretracker.pro.data.mapper.toDto
 import com.cardscoretracker.pro.di.FirebaseModule
 import com.cardscoretracker.pro.model.Game
 import com.cardscoretracker.pro.model.Round
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -21,28 +23,39 @@ import kotlinx.coroutines.tasks.await
 
 /**
  * Concrete implementation of [GameRepository] backed by Firebase Firestore.
- * Supports reactive real-time updates via [callbackFlow], offline persistent caching,
- * and sub-collection storage for rounds.
+ * All game data is isolated under `users/{currentUserId}/games` and rounds under
+ * `users/{currentUserId}/games/{gameId}/rounds`.
  */
 class FirestoreGameRepository(
-    private val firestore: FirebaseFirestore = FirebaseModule.provideFirestore()
+    private val firestore: FirebaseFirestore = FirebaseModule.provideFirestore(),
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
 ) : GameRepository {
 
     companion object {
-        const val COLLECTION_GAMES = "games"
+        const val COLLECTION_USERS = "users"
+        const val SUBCOLLECTION_GAMES = "games"
         const val SUBCOLLECTION_ROUNDS = "rounds"
+    }
+
+    /**
+     * Resolves the user-isolated collection reference for games:
+     * Path: `users/{userId}/games`
+     */
+    private fun getGamesCollection(): CollectionReference {
+        val uid = auth.currentUser?.uid ?: "anonymous_user"
+        return firestore.collection(COLLECTION_USERS)
+            .document(uid)
+            .collection(SUBCOLLECTION_GAMES)
     }
 
     // ─── Reactive Streams ─────────────────────────────────────────────────────
 
     override fun getAllGames(): Flow<List<Game>> = callbackFlow {
-        val query = firestore.collection(COLLECTION_GAMES)
+        val query = getGamesCollection()
             .orderBy("createdAt", Query.Direction.DESCENDING)
 
-        // Include metadata changes so cache responses emit immediately when offline
         val registration = query.addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
             if (error != null) {
-                // When device is offline / server unavailable, do not abort the flow
                 if (error.code == FirebaseFirestoreException.Code.UNAVAILABLE) {
                     return@addSnapshotListener
                 }
@@ -63,7 +76,7 @@ class FirestoreGameRepository(
     }
 
     override fun getGame(gameId: String): Flow<Game?> = callbackFlow {
-        val docRef = firestore.collection(COLLECTION_GAMES).document(gameId)
+        val docRef = getGamesCollection().document(gameId)
 
         val registration = docRef.addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
             if (error != null) {
@@ -85,7 +98,7 @@ class FirestoreGameRepository(
     }
 
     override fun getRounds(gameId: String): Flow<List<Round>> = callbackFlow {
-        val collectionRef = firestore.collection(COLLECTION_GAMES)
+        val collectionRef = getGamesCollection()
             .document(gameId)
             .collection(SUBCOLLECTION_ROUNDS)
             .orderBy("roundNumber", Query.Direction.ASCENDING)
@@ -120,11 +133,10 @@ class FirestoreGameRepository(
     // ─── One-shot Reads ───────────────────────────────────────────────────────
 
     override suspend fun getGameById(gameId: String): Game? {
-        val docRef = firestore.collection(COLLECTION_GAMES).document(gameId)
+        val docRef = getGamesCollection().document(gameId)
         val snapshot = try {
             docRef.get().await()
         } catch (_: FirebaseFirestoreException) {
-            // Gracefully fallback to local offline cache
             try {
                 docRef.get(Source.CACHE).await()
             } catch (_: Exception) {
@@ -142,7 +154,7 @@ class FirestoreGameRepository(
     override suspend fun getGameWithDetails(gameId: String): Game? {
         val game = getGameById(gameId) ?: return null
 
-        val roundsQuery = firestore.collection(COLLECTION_GAMES)
+        val roundsQuery = getGamesCollection()
             .document(gameId)
             .collection(SUBCOLLECTION_ROUNDS)
             .orderBy("roundNumber", Query.Direction.ASCENDING)
@@ -170,15 +182,15 @@ class FirestoreGameRepository(
 
     override suspend fun createGame(game: Game): String {
         val gameDocRef = if (game.id.isNotBlank()) {
-            firestore.collection(COLLECTION_GAMES).document(game.id)
+            getGamesCollection().document(game.id)
         } else {
-            firestore.collection(COLLECTION_GAMES).document()
+            getGamesCollection().document()
         }
 
         val gameDto = game.toDto().copy(id = gameDocRef.id)
         gameDocRef.set(gameDto).await()
 
-        // If game already has initial rounds, write them into the sub-collection
+        // If game already has initial rounds, write them into the user's sub-collection
         if (game.rounds.isNotEmpty()) {
             val batch = firestore.batch()
             game.rounds.forEach { round ->
@@ -193,7 +205,7 @@ class FirestoreGameRepository(
     }
 
     override suspend fun addRound(gameId: String, round: Round): String {
-        val gameDocRef = firestore.collection(COLLECTION_GAMES).document(gameId)
+        val gameDocRef = getGamesCollection().document(gameId)
         val roundDocRef = gameDocRef.collection(SUBCOLLECTION_ROUNDS).document()
 
         val roundDto = round.toDto().copy(
@@ -201,7 +213,7 @@ class FirestoreGameRepository(
             gameId = gameId
         )
 
-        // 1. Save the round in the sub-collection (queued locally if offline)
+        // 1. Save the round in the sub-collection (offline-cached immediately)
         roundDocRef.set(roundDto).await()
 
         // 2. Update parent game document metadata
@@ -230,14 +242,14 @@ class FirestoreGameRepository(
         if (totalRounds != null) updates["totalRounds"] = totalRounds
         if (finalScores != null) updates["finalScores"] = finalScores
 
-        firestore.collection(COLLECTION_GAMES)
+        getGamesCollection()
             .document(gameId)
             .update(updates)
             .await()
     }
 
     override suspend fun deleteGame(gameId: String) {
-        val gameDocRef = firestore.collection(COLLECTION_GAMES).document(gameId)
+        val gameDocRef = getGamesCollection().document(gameId)
         val roundsSnapshot = try {
             gameDocRef.collection(SUBCOLLECTION_ROUNDS).get().await()
         } catch (_: FirebaseFirestoreException) {
