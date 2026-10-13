@@ -7,9 +7,9 @@ import androidx.room.PrimaryKey
 data class GameEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val gameMode: String,
-    val dateTime: Long,
-    val playerNames: String, // JSON array of names
-    val loserName: String,
-    val totalRounds: Int
+    val gameMode: String = "",
+    val dateTime: Long = 0L,
+    val playerNames: String = "[]", // JSON array of names
+    val loserName: String = "",
+    val totalRounds: Int = 0
 )

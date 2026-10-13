@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.cardscoretracker.pro.data.mapper.toGameWithRoundsAndScores
+import com.cardscoretracker.pro.model.Game
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -16,6 +18,16 @@ object ExcelExporter {
     // ──────────────────────────────────────────────────────────────────────────
     // PUBLIC API
     // ──────────────────────────────────────────────────────────────────────────
+
+    fun downloadAsCsv(context: Context, game: Game) {
+        val details = game.toGameWithRoundsAndScores()
+        downloadAsCsv(context, details)
+    }
+
+    fun shareAsCsv(context: Context, game: Game) {
+        val details = game.toGameWithRoundsAndScores()
+        shareAsCsv(context, details)
+    }
 
     /**
      * Saves the game as a CSV file directly to the Downloads folder on the device.

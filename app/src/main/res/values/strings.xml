@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Card Score Tracker Pro</string>
+    <!-- Firebase Web Client ID for Google Sign-In with Credential Manager -->
+    <string name="default_web_client_id">1055449181425-qa1tfco5tcd14t6bt4tcme5kggh6uvh0.apps.googleusercontent.com</string>
 </resources>

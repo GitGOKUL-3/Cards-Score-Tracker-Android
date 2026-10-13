@@ -1,7 +1,6 @@
 package com.cardscoretracker.pro.ui.screens
 
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -19,31 +18,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.os.Environment
 import com.cardscoretracker.pro.data.ExcelExporter
-import com.cardscoretracker.pro.data.GameWithRoundsAndScores
+import com.cardscoretracker.pro.model.Game
 import com.cardscoretracker.pro.model.GameMode
 import com.cardscoretracker.pro.ui.theme.*
-
-
 import com.cardscoretracker.pro.viewmodel.GameViewModel
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryDetailScreen(
-    gameId: Long,
+    gameId: String,
     viewModel: GameViewModel,
     isDarkTheme: Boolean,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var gameDetails by remember { mutableStateOf<GameWithRoundsAndScores?>(null) }
+    var gameDetails by remember { mutableStateOf<Game?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-
 
     LaunchedEffect(gameId) {
         gameDetails = viewModel.getGameWithDetails(gameId)
@@ -123,7 +116,7 @@ fun HistoryDetailScreen(
                     )
                 }
                 else -> {
-                    GameDetailContent(gameDetails = gameDetails!!, context = context, isDarkTheme = isDarkTheme)
+                    GameDetailContent(game = gameDetails!!, isDarkTheme = isDarkTheme)
                 }
             }
         }
@@ -132,36 +125,35 @@ fun HistoryDetailScreen(
 
 @Composable
 private fun GameDetailContent(
-    gameDetails: GameWithRoundsAndScores,
-    context: Context,
+    game: Game,
     isDarkTheme: Boolean
 ) {
-    val game = gameDetails.game
-    val rounds = gameDetails.rounds
-    val scope = rememberCoroutineScope()
+    val rounds = game.rounds
 
     val dateFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
-    val dateStr = dateFormat.format(Date(game.dateTime))
+    val dateStr = game.createdAt?.let { dateFormat.format(it) } ?: "Recent"
 
-    val modeName = when (game.gameMode) {
-        GameMode.MODE_240.name -> "240 Mode"
-        GameMode.MODE_7S.name -> "7s Mode"
-        GameMode.MODE_5S.name -> "5s Mode"
-        else -> game.gameMode
-    }
+    val modeName = game.gameMode.displayName
     val modeEmoji = when (game.gameMode) {
-        GameMode.MODE_240.name -> "🟥"
-        GameMode.MODE_7S.name -> "🟦"
-        GameMode.MODE_5S.name -> "🟩"
-        else -> "🃏"
+        GameMode.MODE_240 -> "🟥"
+        GameMode.MODE_7S -> "🟦"
+        GameMode.MODE_5S -> "🟩"
     }
 
-    // Collect unique player names from scores
-    val playerNames = rounds.flatMap { it.scores }.map { it.playerName }.distinct()
+    // Collect unique player names from game metadata or rounds
+    val playerNames = if (game.playerNames.isNotEmpty()) {
+        game.playerNames
+    } else {
+        rounds.flatMap { it.playerScores.map { p -> p.playerName } }.distinct()
+    }
 
     // Calculate final totals
     val finalTotals = playerNames.associateWith { name ->
-        rounds.sumOf { round -> round.scores.find { it.playerName == name }?.score ?: 0 }
+        rounds.sumOf { round ->
+            round.playerScores.find { it.playerName == name }?.score
+                ?: round.roundScores[name]
+                ?: 0
+        }
     }
 
     Column(
@@ -339,8 +331,7 @@ private fun GameDetailContent(
                         modifier = Modifier.padding(vertical = 8.dp)
                     )
 
-                    rounds.forEach { roundWithScores ->
-                        val round = roundWithScores.round
+                    rounds.forEach { round ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -361,9 +352,9 @@ private fun GameDetailContent(
                                 }
                             }
                             playerNames.forEach { name ->
-                                val score =
-                                    roundWithScores.scores.find { it.playerName == name }?.score
-                                        ?: 0
+                                val score = round.playerScores.find { it.playerName == name }?.score
+                                    ?: round.roundScores[name]
+                                    ?: 0
                                 Text(
                                     text = "$score",
                                     color = if (isDarkTheme) White else IndigoText,
@@ -406,5 +397,3 @@ private fun GameDetailContent(
         }
     }
 }
-
-

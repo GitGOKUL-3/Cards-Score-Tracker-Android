@@ -1,26 +1,32 @@
 package com.cardscoretracker.pro.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,8 +36,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cardscoretracker.pro.model.GameMode
 import com.cardscoretracker.pro.model.Player
 import com.cardscoretracker.pro.ui.theme.*
-
 import com.cardscoretracker.pro.viewmodel.GameViewModel
+import com.cardscoretracker.pro.viewmodel.RoundRecord
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,13 +50,129 @@ fun GameScreen(
     val state by viewModel.gameState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Track round winner selection (resets automatically on every new round)
+    var winnerSelectedThisRound by remember(state.currentRound) { mutableStateOf<Int?>(null) }
+
+    // If an input is changed manually away from "0", sync winner status
+    LaunchedEffect(state.roundInputs, state.currentRound) {
+        val currentWinner = winnerSelectedThisRound
+        if (currentWinner != null && state.roundInputs[currentWinner]?.trim() != "0") {
+            winnerSelectedThisRound = null
+        }
+    }
+
+    // ── Back Button Protection ──────────────────────────────────────────────
+    var showExitDialog by remember { mutableStateOf(false) }
+
+    // Intercept system back button during active game
+    BackHandler(enabled = !state.isGameOver) {
+        showExitDialog = true
+    }
+
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = WarningAmber
+                )
+            },
+            title = {
+                Text(
+                    text = "Leave Match?",
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDarkTheme) White else IndigoText
+                )
+            },
+            text = {
+                Text(
+                    text = "Unsaved progress in current round will be lost. Are you sure you want to exit?",
+                    color = if (isDarkTheme) LightGray else IndigoSoft
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitDialog = false
+                        onBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed)
+                ) {
+                    Text("Exit", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showExitDialog = false },
+                    border = BorderStroke(1.dp, if (isDarkTheme) White.copy(alpha = 0.3f) else LightInputBorder)
+                ) {
+                    Text("Stay", color = if (isDarkTheme) White else IndigoText)
+                }
+            },
+            containerColor = if (isDarkTheme) DarkCard else LightCard
+        )
+    }
+
+    // ── Reset Round Confirmation Dialog ─────────────────────────────────────
+    var showResetDialog by remember { mutableStateOf(false) }
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = WarningAmber
+                )
+            },
+            title = {
+                Text(
+                    text = "Reset Round?",
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDarkTheme) White else IndigoText
+                )
+            },
+            text = {
+                Text(
+                    text = "This will clear all score entries for Round ${state.currentRound}. Any 'Chance' used this round will also be undone.",
+                    color = if (isDarkTheme) LightGray else IndigoSoft
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        // Cleanly resets scores and clears Chance usage in ViewModel
+                        viewModel.resetCurrentRoundData()
+                        winnerSelectedThisRound = null
+                        showResetDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = VibrantOrange)
+                ) {
+                    Text("Reset", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showResetDialog = false },
+                    border = BorderStroke(1.dp, if (isDarkTheme) White.copy(alpha = 0.3f) else LightInputBorder)
+                ) {
+                    Text("Cancel", color = if (isDarkTheme) White else IndigoText)
+                }
+            },
+            containerColor = if (isDarkTheme) DarkCard else LightCard
+        )
+    }
 
     // Loser dialog
     if (state.showLoserDialog) {
         LoserDialog(
             message = state.loserMessage,
-
             onDismiss = {
                 viewModel.dismissLoserDialog()
                 onGameOver()
@@ -60,7 +182,6 @@ fun GameScreen(
 
     val textColor    = if (isDarkTheme) White else IndigoText
     val subTextColor  = if (isDarkTheme) LightBlue else IndigoSoft
-    val cardColor     = if (isDarkTheme) DarkCard.copy(alpha = 0.85f) else LightCard
     val gradientBrush = if (isDarkTheme) {
         Brush.verticalGradient(colors = listOf(DeepBlue, Color(0xFF0F2460), Color(0xFF0A1A40)))
     } else {
@@ -90,7 +211,7 @@ fun GameScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { showExitDialog = true }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = textColor)
                     }
                 },
@@ -100,6 +221,7 @@ fun GameScreen(
                 modifier = Modifier.background(brush = gradientBrush)
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = Color.Transparent
     ) { paddingValues ->
         Box(
@@ -125,42 +247,148 @@ fun GameScreen(
                 }
 
                 // Score cards for each player
-                state.players.forEach { player ->
+                val dealerIndex = (state.currentRound - 1) % state.players.size
+                state.players.forEachIndexed { index, player ->
+                    val isLastPlayer = index == state.players.lastIndex
+                    val isChanceUsed = state.chanceUsedThisRound.contains(player.id)
+                    val isRoundWinner = winnerSelectedThisRound == player.id
+
                     PlayerScoreCard(
                         player = player,
+                        isDealer = index == dealerIndex,
                         gameMode = state.gameMode,
                         currentRound = state.currentRound,
                         totalRounds = state.totalRounds,
                         inputValue = state.roundInputs[player.id] ?: "",
-                        chanceUsedThisRound = state.chanceUsedThisRound.contains(player.id),
+                        chanceUsedThisRound = isChanceUsed,
+                        isRoundWinner = isRoundWinner,
                         isDarkTheme = isDarkTheme,
-                        onInputChange = { viewModel.updateRoundInput(player.id, it) },
-                        onUseChance = { viewModel.useChance(player.id) }
+                        imeAction = if (isLastPlayer) ImeAction.Done else ImeAction.Next,
+                        onImeAction = {
+                            if (isLastPlayer) {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                            } else {
+                                focusManager.moveFocus(FocusDirection.Down)
+                            }
+                        },
+                        onInputChange = { newValue ->
+                            if (isRoundWinner && newValue != "0") {
+                                winnerSelectedThisRound = null
+                            }
+                            viewModel.updateRoundInput(player.id, newValue)
+                        },
+                        onUseChance = {
+                            // Mutual Exclusion: using Chance clears winner selection for this player
+                            if (winnerSelectedThisRound == player.id) {
+                                winnerSelectedThisRound = null
+                            }
+                            viewModel.useChance(player.id)
+                        },
+                        onCancelChance = {
+                            viewModel.cancelChance(player.id)
+                        },
+                        onMarkAsWinner = {
+                            // Mutual Exclusion: player using Chance CANNOT be marked as winner
+                            if (isChanceUsed) return@PlayerScoreCard
+
+                            if (isRoundWinner) {
+                                // Toggle off
+                                winnerSelectedThisRound = null
+                                viewModel.updateRoundInput(player.id, "")
+                            } else {
+                                // Clear previous winner's score if any
+                                winnerSelectedThisRound?.let { prevWinnerId ->
+                                    viewModel.updateRoundInput(prevWinnerId, "")
+                                }
+                                winnerSelectedThisRound = player.id
+                                viewModel.updateRoundInput(player.id, "0")
+                            }
+                        }
                     )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Submit Round Button
-                Button(
-                    onClick = {
-                        keyboardController?.hide()
-                        viewModel.submitRound()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VibrantOrange),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+                // ── Action Buttons Row: Submit + Reset ───────────────────────
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(22.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Submit Round ${state.currentRound}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // Feature 1: Reset Round button
+                    OutlinedButton(
+                        onClick = { showResetDialog = true },
+                        modifier = Modifier
+                            .height(56.dp)
+                            .weight(0.42f),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.5.dp, if (isDarkTheme) White.copy(alpha = 0.3f) else LightInputBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (isDarkTheme) White else IndigoText
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Reset Round",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Reset",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    // Submit Round button
+                    Button(
+                        onClick = {
+                            // Check if round winner is marked
+                            if (winnerSelectedThisRound == null) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        message = "🏆 Please mark a round winner before submitting",
+                                        duration = SnackbarDuration.Short
+                                    )
+                                }
+                                return@Button
+                            }
+
+                            // Check if all player scores are entered
+                            val allScoresEntered = state.players.all { p ->
+                                val scoreStr = state.roundInputs[p.id]
+                                scoreStr?.isNotBlank() == true && scoreStr.toIntOrNull() != null
+                            }
+                            if (!allScoresEntered) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        message = "⚠️ Please enter scores for all players",
+                                        duration = SnackbarDuration.Short
+                                    )
+                                }
+                                return@Button
+                            }
+
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
+                            viewModel.submitRound()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .weight(0.58f),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = VibrantOrange),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(22.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Submit R${state.currentRound}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 // Round History
@@ -251,14 +479,20 @@ private fun RoundProgressIndicator(currentRound: Int, totalRounds: Int, isDarkTh
 @Composable
 private fun PlayerScoreCard(
     player: Player,
+    isDealer: Boolean,
     gameMode: GameMode,
     currentRound: Int,
     totalRounds: Int,
     inputValue: String,
     chanceUsedThisRound: Boolean,
+    isRoundWinner: Boolean,        // Feature 2
     isDarkTheme: Boolean,
+    imeAction: ImeAction = ImeAction.Next,
+    onImeAction: () -> Unit = {},
     onInputChange: (String) -> Unit,
-    onUseChance: () -> Unit
+    onUseChance: () -> Unit,
+    onCancelChance: () -> Unit,
+    onMarkAsWinner: () -> Unit     // Feature 2
 ) {
     val isDoubledRound = (gameMode == GameMode.MODE_7S || gameMode == GameMode.MODE_5S) &&
             (currentRound == 1 || currentRound == totalRounds)
@@ -269,17 +503,22 @@ private fun PlayerScoreCard(
 
     val progressColor = when {
         progressFraction > 0.85f -> ErrorRed
-        progressFraction > 0.6f -> WarningAmber
-        else -> SuccessGreen
+        progressFraction > 0.6f  -> WarningAmber
+        else                     -> SuccessGreen
+    }
+
+    // Feature 2: winner card gets a subtle green tint
+    val cardBgColor = when {
+        isRoundWinner -> if (isDarkTheme) SuccessGreen.copy(alpha = 0.12f) else SuccessGreen.copy(alpha = 0.08f)
+        else          -> if (isDarkTheme) DarkCard.copy(alpha = 0.85f) else LightCard
     }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDarkTheme) DarkCard.copy(alpha = 0.85f) else LightCard
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+        colors = CardDefaults.cardColors(containerColor = cardBgColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        border = if (isRoundWinner) BorderStroke(1.5.dp, SuccessGreen.copy(alpha = 0.6f)) else null
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Player header
@@ -289,6 +528,7 @@ private fun PlayerScoreCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Avatar circle
                     Box(
                         modifier = Modifier
                             .size(40.dp)
@@ -299,7 +539,7 @@ private fun PlayerScoreCard(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = player.name.first().uppercaseChar().toString(),
+                            text = player.name.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
                             color = if (isDarkTheme) White else IndigoText,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
@@ -307,12 +547,30 @@ private fun PlayerScoreCard(
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(
-                            text = player.name,
-                            color = if (isDarkTheme) White else IndigoText,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        // Player name + dealer badge
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = player.name,
+                                color = if (isDarkTheme) White else IndigoText,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            if (isDealer) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = if (isDarkTheme) VibrantOrange.copy(alpha = 0.25f) else VibrantOrange.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "♠",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = VibrantOrange,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
                         if (gameMode == GameMode.MODE_240) {
                             Text(
                                 text = "Chances: ${player.chances}/3",
@@ -322,19 +580,39 @@ private fun PlayerScoreCard(
                         }
                     }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "${player.totalScore}",
-                        color = if (gameMode == GameMode.MODE_240 && player.totalScore >= 200) ErrorRed else VibrantOrange,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 28.sp
-                    )
-                    if (gameMode == GameMode.MODE_240) {
-                        Text(
-                            text = "/ 240",
-                            color = if (isDarkTheme) LightGray else IndigoSoft,
-                            style = MaterialTheme.typography.bodyMedium
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Feature 2: Trophy / Winner button (Disabled if Chance was used)
+                    IconButton(
+                        onClick = onMarkAsWinner,
+                        enabled = !chanceUsedThisRound
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EmojiEvents,
+                            contentDescription = "Mark as round winner (0 pts)",
+                            tint = when {
+                                isRoundWinner -> Color(0xFFFFD700)
+                                chanceUsedThisRound -> if (isDarkTheme) White.copy(alpha = 0.12f) else IndigoText.copy(alpha = 0.12f)
+                                else -> if (isDarkTheme) White.copy(alpha = 0.3f) else IndigoText.copy(alpha = 0.3f)
+                            },
+                            modifier = Modifier.size(22.dp)
                         )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "${player.totalScore}",
+                            color = if (gameMode == GameMode.MODE_240 && player.totalScore >= 200) ErrorRed else VibrantOrange,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 28.sp
+                        )
+                        if (gameMode == GameMode.MODE_240) {
+                            Text(
+                                text = "/ 240",
+                                color = if (isDarkTheme) LightGray else IndigoSoft,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
                     }
                 }
             }
@@ -361,7 +639,30 @@ private fun PlayerScoreCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (chanceUsedThisRound) {
+                // Feature 2: Show "Won this round!" surface when winner is selected
+                if (isRoundWinner) {
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = SuccessGreen.copy(alpha = 0.15f),
+                        border = BorderStroke(1.5.dp, SuccessGreen.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text("🏆", fontSize = 18.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "0 pts — Won this round!",
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                } else if (chanceUsedThisRound) {
                     // Show locked "Chance Used" display instead of text field
                     Surface(
                         modifier = Modifier.weight(1f),
@@ -398,7 +699,14 @@ private fun PlayerScoreCard(
                                 fontSize = 12.sp
                             )
                         },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = imeAction
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = { onImeAction() },
+                            onDone = { onImeAction() }
+                        ),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -423,17 +731,24 @@ private fun PlayerScoreCard(
                 // Chance button (240 mode only)
                 if (gameMode == GameMode.MODE_240) {
                     val chancesLeft = 3 - player.chances
-                    // Button is disabled if: no chances left OR already used chance this round
-                    val canUseChance = chancesLeft > 0 && !chanceUsedThisRound
+                    // Mutual exclusion: Winner cannot use chance. If chance already active, allow tapping to cancel!
+                    val canInteractChance = if (chanceUsedThisRound) true else (chancesLeft > 0 && !isRoundWinner)
+
                     Button(
-                        onClick = onUseChance,
-                        enabled = canUseChance,
+                        onClick = {
+                            if (chanceUsedThisRound) {
+                                onCancelChance()
+                            } else {
+                                onUseChance()
+                            }
+                        },
+                        enabled = canInteractChance,
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = when {
                                 chanceUsedThisRound -> WarningAmber.copy(alpha = 0.4f)
-                                chancesLeft > 0 -> WarningAmber
-                                else -> MediumGray
+                                chancesLeft > 0     -> WarningAmber
+                                else                -> MediumGray
                             },
                             disabledContainerColor = MediumGray.copy(alpha = 0.4f)
                         ),
@@ -481,7 +796,7 @@ private fun PlayerScoreCard(
 
 @Composable
 private fun RoundHistorySection(
-    roundHistory: List<com.cardscoretracker.pro.viewmodel.RoundRecord>,
+    roundHistory: List<RoundRecord>,
     players: List<Player>,
     isDarkTheme: Boolean
 ) {
@@ -525,25 +840,34 @@ private fun RoundHistorySection(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                 ) {
-                    Row(modifier = Modifier.width(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "R${record.roundNumber}",
-                            color = if (record.isDoubled) VibrantOrange else LightGray,
-                            fontSize = 12.sp,
-                            fontWeight = if (record.isDoubled) FontWeight.Bold else FontWeight.Normal
-                        )
-                        if (record.isDoubled) {
-                            Text("×2", color = VibrantOrange, fontSize = 9.sp)
+                    Row(modifier = Modifier.width(56.dp), verticalAlignment = Alignment.Top) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "R${record.roundNumber}",
+                                    color = if (record.isDoubled) VibrantOrange else LightGray,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (record.isDoubled) FontWeight.Bold else FontWeight.Normal
+                                )
+                                if (record.isDoubled) {
+                                    Text("×2", color = VibrantOrange, fontSize = 9.sp)
+                                }
+                            }
                         }
                     }
                     players.forEach { player ->
-                        Text(
-                            text = "${record.scores[player.name] ?: 0}",
-                            color = if (isDarkTheme) White else IndigoText,
-                            fontSize = 13.sp,
+                        val score = record.scores[player.name] ?: 0
+                        Column(
                             modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.Center
-                        )
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (score == 0) "0" else "$score",
+                                color = if (score == 0) SuccessGreen else if (isDarkTheme) White else IndigoText,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -629,9 +953,6 @@ private fun LoserDialog(
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(24.dp))
-
-
-
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // New Game button

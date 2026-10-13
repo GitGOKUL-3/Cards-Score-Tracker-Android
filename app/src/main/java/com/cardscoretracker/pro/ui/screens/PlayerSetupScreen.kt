@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,11 +32,15 @@ import com.cardscoretracker.pro.viewmodel.GameViewModel
 fun PlayerSetupScreen(
     viewModel: GameViewModel,
     onGameStarted: () -> Unit,
-    onHistoryClicked: () -> Unit
+    onHistoryClicked: () -> Unit,
+    onLogoutClicked: (() -> Unit)? = null,
+    onLogout: (() -> Unit)? = onLogoutClicked
 ) {
+    val handleLogout = onLogout ?: onLogoutClicked
     var selectedMode by remember { mutableStateOf(GameMode.MODE_240) }
     var playerNames by remember { mutableStateOf(listOf("", "")) }
     var errorMessage by remember { mutableStateOf("") }
+    var showLogoutDialog by remember { mutableStateOf(false) }
     val savedNames by viewModel.savedPlayerNames.collectAsStateWithLifecycle()
     val isDarkTheme by viewModel.isDarkTheme.collectAsStateWithLifecycle()
 
@@ -66,7 +71,7 @@ fun PlayerSetupScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "🃏 Card Score",
                         style = MaterialTheme.typography.displayMedium,
@@ -80,32 +85,50 @@ fun PlayerSetupScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                // Theme toggle button
+                // Header action buttons
                 val btnBg = if (isDarkTheme) White.copy(alpha = 0.15f) else LightIconBg
-                IconButton(
-                    onClick = { viewModel.toggleTheme() },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(color = btnBg, shape = CircleShape)
-                ) {
-                    Text(
-                        text = if (isDarkTheme) "☀️" else "🌙",
-                        fontSize = 20.sp
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(
-                    onClick = onHistoryClicked,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(color = btnBg, shape = CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.History,
-                        contentDescription = "History",
-                        tint = textColor,
-                        modifier = Modifier.size(24.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { viewModel.toggleTheme() },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(color = btnBg, shape = CircleShape)
+                    ) {
+                        Text(
+                            text = if (isDarkTheme) "☀️" else "🌙",
+                            fontSize = 18.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = onHistoryClicked,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(color = btnBg, shape = CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "History",
+                            tint = textColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    if (handleLogout != null) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { showLogoutDialog = true },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(color = btnBg, shape = CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
+                                contentDescription = "Log Out",
+                                tint = textColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -173,6 +196,13 @@ fun PlayerSetupScreen(
                             color = if (isDarkTheme) LightBlue else VibrantOrange
                         )
                     }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Enter players in clockwise order (Dealer first)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isDarkTheme) LightGray.copy(alpha = 0.7f) else subTextColor,
+                        fontSize = 11.sp
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
 
                     playerNames.forEachIndexed { index, name ->
@@ -262,6 +292,47 @@ fun PlayerSetupScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+
+        if (showLogoutDialog) {
+            AlertDialog(
+                onDismissRequest = { showLogoutDialog = false },
+                title = {
+                    Text(
+                        text = "Logout Confirmation",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Are you sure you want to log out? Your games will remain saved in your account."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showLogoutDialog = false
+                            handleLogout?.invoke()
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text(
+                            text = "Logout",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showLogoutDialog = false }
+                    ) {
+                        Text(text = "Cancel")
+                    }
+                }
+            )
         }
     }
 }

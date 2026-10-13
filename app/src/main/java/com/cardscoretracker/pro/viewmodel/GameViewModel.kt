@@ -3,22 +3,26 @@ package com.cardscoretracker.pro.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.cardscoretracker.pro.data.AppDatabase
-import com.cardscoretracker.pro.data.GameDao
-import com.cardscoretracker.pro.data.GameEntity
-import com.cardscoretracker.pro.data.GameWithRoundsAndScores
 import com.cardscoretracker.pro.data.PlayerNameRepository
-import com.cardscoretracker.pro.data.PlayerScoreEntity
-import com.cardscoretracker.pro.data.RoundEntity
 import com.cardscoretracker.pro.data.ThemePreferences
+import com.cardscoretracker.pro.data.mapper.toGameWithRoundsAndScores
+import com.cardscoretracker.pro.data.repository.GameRepository
+import com.cardscoretracker.pro.data.repository.GameRepositoryFactory
+import com.cardscoretracker.pro.model.Game
 import com.cardscoretracker.pro.model.GameMode
 import com.cardscoretracker.pro.model.Player
+import com.cardscoretracker.pro.model.PlayerScore
+import com.cardscoretracker.pro.model.Round
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.Date
 
 data class GameState(
+    val currentGameId: String = "",
     val gameMode: GameMode = GameMode.MODE_240,
     val players: List<Player> = emptyList(),
     val currentRound: Int = 1,
@@ -33,15 +37,15 @@ data class GameState(
 )
 
 data class RoundRecord(
-    val roundNumber: Int,
-    val scores: Map<String, Int>, // playerName -> score for this round
+    val roundNumber: Int = 0,
+    val scores: Map<String, Int> = emptyMap(), // playerName -> score for this round
     val isDoubled: Boolean = false
 )
 
-class GameViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val db: AppDatabase = AppDatabase.getDatabase(application)
-    private val dao: GameDao = db.gameDao()
+class GameViewModel @JvmOverloads constructor(
+    application: Application,
+    private val repository: GameRepository = GameRepositoryFactory.getRepository()
+) : AndroidViewModel(application) {
 
     private val _gameState = MutableStateFlow(GameState())
     val gameState: StateFlow<GameState> = _gameState.asStateFlow()
@@ -54,7 +58,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDarkTheme = MutableStateFlow(ThemePreferences.isDarkTheme(application))
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
-    val allGames = dao.getAllGames()
+    // Reactive stream from Firestore converted to StateFlow
+    val allGames: StateFlow<List<Game>> = repository.getAllGames()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     init {
         _savedPlayerNames.value = PlayerNameRepository.getSavedNames(application)
@@ -77,13 +87,27 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             GameMode.MODE_5S -> 5
             GameMode.MODE_240 -> 0
         }
+
         _gameState.value = GameState(
+            currentGameId = "",
             gameMode = mode,
             players = players,
             currentRound = 1,
             totalRounds = totalRounds,
             roundInputs = players.associate { it.id to "" }
         )
+
+        // Asynchronously initialize the game in Firestore
+        viewModelScope.launch {
+            val initialGame = Game(
+                gameMode = mode,
+                playerNames = playerNames,
+                totalRounds = totalRounds,
+                createdAt = Date()
+            )
+            val gameId = repository.createGame(initialGame)
+            _gameState.value = _gameState.value.copy(currentGameId = gameId)
+        }
     }
 
     // ─── Input Handling ───────────────────────────────────────────────────────
@@ -112,6 +136,28 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /**
+     * Cancels an active chance used this round by a specific player and resets their score input.
+     */
+    fun cancelChance(playerId: Int) {
+        val current = _gameState.value
+        _gameState.value = current.copy(
+            chanceUsedThisRound = current.chanceUsedThisRound - playerId,
+            roundInputs = current.roundInputs + (playerId to "")
+        )
+    }
+
+    /**
+     * Clears all score inputs for the current round and undoes any chance usage.
+     */
+    fun resetCurrentRoundData() {
+        val current = _gameState.value
+        _gameState.value = current.copy(
+            roundInputs = current.players.associate { it.id to "" },
+            chanceUsedThisRound = emptySet()
+        )
+    }
+
     // ─── Submit Round ─────────────────────────────────────────────────────────
 
     fun submitRound() {
@@ -128,7 +174,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val isDoubled = isRoundDoubled(current.gameMode, roundNumber, current.totalRounds)
 
         // Calculate scores for this round
-        // Players who used a chance this round get their chances counter incremented
         val roundScores = mutableMapOf<String, Int>()
         val updatedPlayers = current.players.map { player ->
             val rawScore = inputs[player.id]!!.toInt()
@@ -148,6 +193,32 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         val newHistory = current.roundHistory + roundRecord
+
+        // Persist round in Firestore asynchronously (offline cache handles immediate storage)
+        viewModelScope.launch {
+            val gameId = current.currentGameId
+            if (gameId.isNotBlank()) {
+                val round = Round(
+                    gameId = gameId,
+                    roundNumber = roundNumber,
+                    isDoubled = isDoubled,
+                    roundScores = roundScores,
+                    playerScores = updatedPlayers.map { p ->
+                        val score = roundScores[p.name] ?: 0
+                        val runningTotal = newHistory
+                            .filter { it.roundNumber <= roundNumber }
+                            .sumOf { it.scores[p.name] ?: 0 }
+                        PlayerScore(
+                            playerName = p.name,
+                            score = score,
+                            chanceUsed = current.chanceUsedThisRound.contains(p.id),
+                            runningTotal = runningTotal
+                        )
+                    }
+                )
+                repository.addRound(gameId, round)
+            }
+        }
 
         when (current.gameMode) {
             GameMode.MODE_240 -> {
@@ -170,7 +241,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         showLoserDialog = true
                     )
                     _gameState.value = newState
-                    saveGameToDb(newState)
+                    saveGameOver(newState)
                 } else {
                     _gameState.value = current.copy(
                         players = updatedPlayers,
@@ -200,7 +271,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         showLoserDialog = true
                     )
                     _gameState.value = newState
-                    saveGameToDb(newState)
+                    saveGameOver(newState)
                 } else {
                     _gameState.value = current.copy(
                         players = updatedPlayers,
@@ -221,25 +292,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun checkFor240GameOver(updatedPlayers: List<Player>, current: GameState) {
-        val over240 = updatedPlayers.filter { it.totalScore >= 240 }
-        if (over240.isNotEmpty()) {
-            val loser = over240.maxByOrNull { it.totalScore }!!
-            val finalPlayers = updatedPlayers.map { p ->
-                if (p.id == loser.id) p.copy(isLoser = true) else p
-            }
-            val newState = current.copy(
-                players = finalPlayers,
-                isGameOver = true,
-                loserName = loser.name,
-                loserMessage = "${loser.name} You are lost ",
-                showLoserDialog = true
-            )
-            _gameState.value = newState
-            saveGameToDb(newState)
-        }
-    }
-
     fun dismissLoserDialog() {
         _gameState.value = _gameState.value.copy(showLoserDialog = false)
     }
@@ -250,53 +302,68 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     // ─── Persistence ──────────────────────────────────────────────────────────
 
-    private fun saveGameToDb(state: GameState) {
+    private fun saveGameOver(state: GameState) {
         viewModelScope.launch {
             // Persist player names for future autocomplete suggestions
             val playerNamesList = state.players.map { it.name }
             PlayerNameRepository.saveNames(getApplication(), playerNamesList)
             _savedPlayerNames.value = PlayerNameRepository.getSavedNames(getApplication())
 
-            val playerNamesJson = state.players.joinToString(",", "[", "]") { "\"${it.name}\"" }
-            val gameEntity = GameEntity(
-                gameMode = state.gameMode.name,
-                dateTime = System.currentTimeMillis(),
-                playerNames = playerNamesJson,
-                loserName = state.loserName,
-                totalRounds = state.roundHistory.size
-            )
-            val gameId = dao.insertGame(gameEntity)
-
-            state.roundHistory.forEach { roundRecord ->
-                val roundEntity = RoundEntity(
+            val finalScoresMap = state.players.associate { it.name to it.totalScore }
+            val gameId = state.currentGameId
+            if (gameId.isNotBlank()) {
+                repository.updateGameStatus(
                     gameId = gameId,
-                    roundNumber = roundRecord.roundNumber,
-                    isDoubled = roundRecord.isDoubled
+                    loserName = state.loserName,
+                    totalRounds = state.roundHistory.size,
+                    finalScores = finalScoresMap
                 )
-                val roundId = dao.insertRound(roundEntity)
-
-                state.players.forEach { player ->
-                    val score = roundRecord.scores[player.name] ?: 0
-                    // Calculate running total up to this round
-                    val runningTotal = state.roundHistory
-                        .filter { it.roundNumber <= roundRecord.roundNumber }
-                        .sumOf { it.scores[player.name] ?: 0 }
-                    dao.insertPlayerScore(
-                        PlayerScoreEntity(
-                            roundId = roundId,
-                            playerName = player.name,
-                            score = score,
-                            runningTotal = runningTotal
+            } else {
+                val game = Game(
+                    gameMode = state.gameMode,
+                    playerNames = playerNamesList,
+                    loserName = state.loserName,
+                    totalRounds = state.roundHistory.size,
+                    rounds = state.roundHistory.map { rec ->
+                        Round(
+                            roundNumber = rec.roundNumber,
+                            isDoubled = rec.isDoubled,
+                            roundScores = rec.scores,
+                            playerScores = state.players.map { p ->
+                                val score = rec.scores[p.name] ?: 0
+                                val runningTotal = state.roundHistory
+                                    .filter { it.roundNumber <= rec.roundNumber }
+                                    .sumOf { it.scores[p.name] ?: 0 }
+                                PlayerScore(
+                                    playerName = p.name,
+                                    score = score,
+                                    runningTotal = runningTotal
+                                )
+                            }
                         )
-                    )
-                }
+                    },
+                    createdAt = Date()
+                )
+                val newId = repository.createGame(game)
+                _gameState.value = _gameState.value.copy(currentGameId = newId)
             }
+        }
+    }
+
+    fun deleteGame(gameId: String) {
+        viewModelScope.launch {
+            repository.deleteGame(gameId)
         }
     }
 
     // ─── History ──────────────────────────────────────────────────────────────
 
-    suspend fun getGameWithDetails(gameId: Long): GameWithRoundsAndScores? {
-        return dao.getGameWithDetails(gameId)
+    suspend fun getGameWithDetails(gameId: String): Game? {
+        return repository.getGameWithDetails(gameId)
+    }
+
+    suspend fun getGameWithDetails(gameId: Long): com.cardscoretracker.pro.data.GameWithRoundsAndScores? {
+        val game = repository.getGameWithDetails(gameId.toString())
+        return game?.toGameWithRoundsAndScores()
     }
 }
